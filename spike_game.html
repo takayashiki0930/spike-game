@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🌵 Spike Game</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:#0a0a18;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    min-height:100vh;
+    font-family:'Segoe UI',sans-serif;
+    color:#fff;
+    user-select:none;
+    overflow:hidden;
+  }
+  h1 {
+    font-size:26px; font-weight:900; letter-spacing:3px;
+    color:#7fff3a; text-shadow:0 0 18px #7fff3a99;
+    margin-bottom:8px;
+  }
+  #hud {
+    display:flex; justify-content:space-between; align-items:center;
+    width:720px; padding:6px 4px;
+    font-size:17px;
+  }
+  #gameCanvas {
+    border-radius:18px;
+    border:2px solid #7fff3a44;
+    box-shadow:0 0 50px #7fff3a1a;
+    display:block;
+  }
+  #controls {
+    font-size:13px; color:#ffffff55; margin-top:6px; text-align:center;
+  }
+  #wrapper { position:relative; }
+  #startMsg {
+    position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    text-align:center; font-size:22px;
+    color:#7fff3a; text-shadow:0 0 14px #7fff3a;
+    pointer-events:none; line-height:1.7;
+  }
+  #overlay {
+    display:none; position:absolute;
+    top:50%; left:50%; transform:translate(-50%,-50%);
+    text-align:center;
+    background:rgba(10,10,24,0.93);
+    border:1.5px solid #7fff3a55;
+    border-radius:22px; padding:40px 56px;
+    backdrop-filter:blur(6px);
+  }
+  #overlay h2 { font-size:34px; color:#7fff3a; margin-bottom:10px; }
+  #overlay .sc { font-size:20px; color:#ccc; margin-bottom:22px; }
+  #overlay button {
+    background:#7fff3a; color:#0a0a18;
+    border:none; padding:13px 36px;
+    font-size:17px; font-weight:800;
+    border-radius:12px; cursor:pointer;
+    transition:transform .1s;
+  }
+  #overlay button:hover { transform:scale(1.06); }
+  #mobileControls { display:none; gap:14px; margin-top:12px; }
+  .mbtn {
+    background:#1a1a32; border:1.5px solid #7fff3a55;
+    color:#7fff3a; font-size:24px;
+    width:68px; height:68px; border-radius:14px;
+    cursor:pointer; display:flex; align-items:center; justify-content:center;
+  }
+  @media(max-width:740px){
+    #gameCanvas{width:360px;height:520px;}
+    #hud{width:360px;}
+    #mobileControls{display:flex;}
+    #controls{display:none;}
+  }
+</style>
+</head>
+<body>
+<h1>🌵 SPIKE GAME</h1>
+<div id="hud">
+  <div id="hpDisplay">❤️❤️❤️</div>
+  <div>⭐ <span id="scoreDisplay">0</span></div>
+  <div style="font-size:13px;color:#ffffff55">Lv.<span id="lvDisplay">1</span></div>
+</div>
+<div id="wrapper">
+  <canvas id="gameCanvas" width="720" height="560"></canvas>
+  <div id="startMsg">🌵 スペースキーかタップで開始！</div>
+  <div id="overlay">
+    <h2>GAME OVER</h2>
+    <div class="sc">スコア: <span id="finalScore">0</span></div>
+    <button onclick="restartGame()">もう一度！</button>
+  </div>
+</div>
+<div id="controls">← → で移動 ／ スペース で弾を発射（空中で分裂！）</div>
+<div id="mobileControls">
+  <button class="mbtn" id="btnLeft">◀</button>
+  <button class="mbtn" id="btnFire">🌵</button>
+  <button class="mbtn" id="btnRight">▶</button>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+let player, bullets, enemies, particles, score, hp, running, started, keys, spawnTimer, lvl;
+
+function init() {
+  player = { x:W/2, y:H-80, speed:5, cooldown:0 };
+  bullets=[]; enemies=[]; particles=[];
+  score=0; hp=3; running=false; started=false;
+  keys={}; spawnTimer=0; lvl=1;
+  document.getElementById('overlay').style.display='none';
+  document.getElementById('startMsg').style.display='block';
+  updateHUD();
+}
+function updateHUD(){
+  document.getElementById('hpDisplay').textContent='❤️'.repeat(Math.max(0,hp));
+  document.getElementById('scoreDisplay').textContent=score;
+  document.getElementById('lvDisplay').textContent=lvl;
+}
+
+/* ── SPIKE character (round, like the figure) ── */
+function drawSpike(cx, cy) {
+  // shadow
+  ctx.fillStyle='rgba(0,0,0,0.18)';
+  ctx.beginPath(); ctx.ellipse(cx, cy+32, 26, 7, 0, 0, Math.PI*2); ctx.fill();
+
+  // legs (stubby, brown)
+  ctx.fillStyle='#5a3010';
+  ctx.beginPath(); rr(ctx, cx-18, cy+20, 14, 14, 5); ctx.fill();
+  ctx.beginPath(); rr(ctx, cx+4,  cy+20, 14, 14, 5); ctx.fill();
+  // feet (darker)
+  ctx.fillStyle='#3d1f08';
+  ctx.beginPath(); rr(ctx, cx-20, cy+30, 16, 8, 4); ctx.fill();
+  ctx.beginPath(); rr(ctx, cx+4,  cy+30, 16, 8, 4); ctx.fill();
+
+  // belt / waist band
+  ctx.fillStyle='#7b3a10';
+  ctx.beginPath(); rr(ctx, cx-24, cy+12, 48, 11, 4); ctx.fill();
+  ctx.fillStyle='#f5a623';
+  ctx.beginPath(); ctx.arc(cx, cy+17, 5, 0, Math.PI*2); ctx.fill(); // buckle
+
+  // main body – big round green ball
+  ctx.fillStyle='#6ecb1a';
+  ctx.beginPath(); ctx.arc(cx, cy-4, 34, 0, Math.PI*2); ctx.fill();
+
+  // body highlight
+  ctx.fillStyle='#8de830';
+  ctx.beginPath(); ctx.arc(cx-8, cy-16, 16, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle='#6ecb1a';
+  ctx.beginPath(); ctx.arc(cx-4, cy-12, 12, 0, Math.PI*2); ctx.fill();
+
+  // back spines (dark green, behind body)
+  ctx.fillStyle='#3a7a08';
+  [[-28,-10],[-26,4],[-24,16],[28,-10],[26,4],[24,16]].forEach(([dx,dy])=>{
+    ctx.beginPath();
+    ctx.moveTo(cx+dx, cy+dy);
+    ctx.lineTo(cx+dx-(dx<0?8:-8), cy+dy-4);
+    ctx.lineTo(cx+dx-(dx<0?4:-4), cy+dy+6);
+    ctx.closePath(); ctx.fill();
+  });
+
+  // arms
+  ctx.fillStyle='#6ecb1a';
+  // left arm (raised, holding gem-like)
+  ctx.beginPath(); rr(ctx, cx-50, cy-18, 18, 28, 9); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx-41, cy-18, 11, 0, Math.PI*2); ctx.fill(); // hand
+  // right arm (lowered)
+  ctx.beginPath(); rr(ctx, cx+32, cy-4, 18, 24, 9); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx+41, cy+20, 10, 0, Math.PI*2); ctx.fill();
+
+  // main body overlay (redraw front)
+  ctx.fillStyle='#6ecb1a';
+  ctx.beginPath(); ctx.arc(cx, cy-4, 32, 0, Math.PI*2); ctx.fill();
+
+  // vertical body lines (subtle)
+  ctx.strokeStyle='#58a814'; ctx.lineWidth=1.5;
+  [-10,0,10].forEach(dx=>{
+    ctx.beginPath();
+    ctx.moveTo(cx+dx, cy-32); ctx.lineTo(cx+dx, cy+22);
+    ctx.stroke();
+  });
+
+  // eyes (big dark ovals, like the figure)
+  ctx.fillStyle='#1a3a08';
+  ctx.beginPath(); ctx.ellipse(cx-11, cy-8, 10, 12, -0.15, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(cx+11, cy-8, 10, 12, 0.15,  0, Math.PI*2); ctx.fill();
+
+  // mouth (heart/frown shape)
+  ctx.fillStyle='#1a3a08';
+  ctx.beginPath(); ctx.ellipse(cx, cy+10, 11, 8, 0, 0, Math.PI*2); ctx.fill();
+
+  // top flower (red, like the figure)
+  ctx.fillStyle='#e02020';
+  [[-7,-42],[7,-42],[0,-46],[-5,-38],[5,-38]].forEach(([dx,dy])=>{
+    ctx.beginPath(); ctx.arc(cx+dx, cy+dy, 7, 0, Math.PI*2); ctx.fill();
+  });
+  ctx.fillStyle='#ff5555';
+  ctx.beginPath(); ctx.arc(cx, cy-42, 5, 0, Math.PI*2); ctx.fill();
+
+  // gem in left hand (purple)
+  ctx.fillStyle='#9b59b6';
+  const gx=cx-41, gy=cy-28;
+  ctx.beginPath();
+  ctx.moveTo(gx, gy-10);
+  ctx.lineTo(gx+8, gy-4);
+  ctx.lineTo(gx+8, gy+6);
+  ctx.lineTo(gx, gy+10);
+  ctx.lineTo(gx-8, gy+6);
+  ctx.lineTo(gx-8, gy-4);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#c39bd3';
+  ctx.beginPath(); ctx.moveTo(gx, gy-10); ctx.lineTo(gx+8, gy-4); ctx.lineTo(gx, gy-2); ctx.closePath(); ctx.fill();
+}
+
+function rr(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x+w-r, y); ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+  ctx.lineTo(x+w, y+h-r); ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h); ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r); ctx.quadraticCurveTo(x, y, x+r, y);
+  ctx.closePath();
+}
+
+/* ── Bullet: goes straight up, splits after 80px ── */
+function shoot() {
+  bullets.push({ x:player.x, y:player.y-40, vy:-8, vx:0, split:false, splitY: player.y-40-80 });
+  player.cooldown = 25;
+}
+
+function drawBullet(b) {
+  ctx.save();
+  ctx.shadowColor='#7fff3a'; ctx.shadowBlur=10;
+  ctx.fillStyle='#7fff3a';
+  // spine-shaped: triangle
+  const angle = Math.atan2(b.vy, b.vx);
+  ctx.translate(b.x, b.y); ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(10, 0); ctx.lineTo(-4, -4); ctx.lineTo(-4, 4);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+/* ── Enemies ── */
+function spawnEnemy() {
+  const x = 36 + Math.random()*(W-72);
+  const types = ['slime','bat','bomb'];
+  const type = types[Math.floor(Math.random()*(lvl>2?3:lvl>1?2:1))];
+  const spd = 1.0 + Math.random()*0.5 + (lvl-1)*0.25;
+  enemies.push({ x, y:-30, type, hp:type==='bomb'?2:1, speed:spd, t:0, hit:0, baseX:x });
+}
+
+function drawEnemy(e) {
+  ctx.save();
+  if(e.hit>0) ctx.globalAlpha=0.35;
+  const x=e.x, y=e.y;
+  if(e.type==='slime'){
+    ctx.fillStyle='#a855f7';
+    ctx.beginPath(); ctx.ellipse(x, y+7, 20, 13, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x, y-7, 15, 18, 0, Math.PI, Math.PI*2); ctx.fill();
+    ctx.fillStyle='#fff';
+    ctx.beginPath(); ctx.arc(x-6, y-9, 6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+6, y-9, 6, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle='#1a0030';
+    ctx.beginPath(); ctx.arc(x-6, y-9, 3.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+6, y-9, 3.5, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#ffffff44'; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.arc(x, y-7, 9, -0.8, 0); ctx.stroke();
+  }
+  if(e.type==='bat'){
+    const flap=Math.sin(e.t*0.25)*6;
+    ctx.fillStyle='#c0392b';
+    ctx.beginPath(); ctx.ellipse(x, y, 11, 10, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x-11,y); ctx.bezierCurveTo(x-28,y-18+flap,x-24,y+9,x-7,y+6); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x+11,y); ctx.bezierCurveTo(x+28,y-18+flap,x+24,y+9,x+7,y+6); ctx.fill();
+    ctx.fillStyle='#fff';
+    ctx.beginPath(); ctx.arc(x-4,y-2,4,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+4,y-2,4,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ff3333';
+    ctx.beginPath(); ctx.arc(x-4,y-2,2,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+4,y-2,2,0,Math.PI*2); ctx.fill();
+  }
+  if(e.type==='bomb'){
+    ctx.fillStyle='#2d3748';
+    ctx.beginPath(); ctx.arc(x, y, 20, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle='#4a5568';
+    ctx.beginPath(); ctx.arc(x-6, y-7, 7, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#f6ad55'; ctx.lineWidth=2.5;
+    ctx.beginPath(); ctx.moveTo(x+13,y-16); ctx.lineTo(x+20,y-26); ctx.stroke();
+    ctx.fillStyle='#f6ad55';
+    ctx.beginPath(); ctx.arc(x+20,y-26,4,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 13px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(e.hp, x, y+5);
+  }
+  ctx.restore();
+}
+
+function burst(x, y, color, n=10) {
+  for(let i=0;i<n;i++){
+    const a=Math.random()*Math.PI*2, spd=2+Math.random()*3.5;
+    particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,life:30,maxLife:30,color});
+  }
+}
+
+function drawBG(){
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#06061a'); bg.addColorStop(1,'#10082a');
+  ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(255,255,255,0.5)';
+  for(let i=0;i<60;i++){
+    const sx=(i*179.3+Date.now()*0.006)%W;
+    const sy=(i*91.7)%(H-100);
+    ctx.beginPath(); ctx.arc(sx,sy,0.8,0,Math.PI*2); ctx.fill();
+  }
+  ctx.fillStyle='#1e0e06'; ctx.fillRect(0,H-32,W,32);
+  ctx.fillStyle='#2e1808'; ctx.fillRect(0,H-34,W,4);
+}
+
+function gameLoop(){
+  if(!running) return;
+  ctx.clearRect(0,0,W,H);
+  drawBG();
+
+  // move
+  if(keys['ArrowLeft']||keys['a']) player.x=Math.max(46,player.x-player.speed);
+  if(keys['ArrowRight']||keys['d']) player.x=Math.min(W-46,player.x+player.speed);
+  if(player.cooldown>0) player.cooldown--;
+  if((keys[' ']||keys['z'])&&player.cooldown<=0) shoot();
+
+  drawSpike(player.x, player.y);
+
+  // bullets – move then check split
+  const newBullets=[];
+  bullets.forEach(b=>{
+    b.x+=b.vx; b.y+=b.vy;
+    if(!b.split && b.y<=b.splitY){
+      // split into 5 directions
+      b.split=true;
+      const angles=[-50,-25,0,25,50];
+      angles.forEach(deg=>{
+        const rad=(deg-90)*Math.PI/180;
+        newBullets.push({x:b.x,y:b.y,vx:Math.cos(rad)*7,vy:Math.sin(rad)*7,split:true,splitY:-999});
+      });
+      return; // remove original
+    }
+    if(b.x>-10&&b.x<W+10&&b.y>-10) {
+      drawBullet(b);
+      newBullets.push(b);
+    }
+  });
+  bullets=newBullets;
+
+  // spawn
+  spawnTimer++;
+  lvl=1+Math.floor(score/8);
+  const rate=Math.max(55,105-lvl*9);
+  if(spawnTimer>=rate){spawnEnemy();spawnTimer=0;}
+
+  // enemies
+  enemies=enemies.filter(e=>{
+    if(e.y>H+40){hp--;updateHUD();burst(e.x,H-32,'#ef4444',5);return false;}
+    e.t++;
+    e.y+=e.speed;
+    if(e.type==='bat') e.x=e.baseX+Math.sin(e.t*0.04)*55;
+    if(e.hit>0) e.hit--;
+
+    let dead=false;
+    bullets=bullets.filter(b=>{
+      const dx=b.x-e.x, dy=b.y-e.y;
+      if(Math.sqrt(dx*dx+dy*dy)<24){
+        e.hp--; e.hit=10;
+        if(e.hp<=0){
+          score++;updateHUD();
+          burst(e.x,e.y,e.type==='slime'?'#a855f7':e.type==='bat'?'#ef4444':'#f6ad55');
+          dead=true;
+        }
+        return false;
+      }
+      return true;
+    });
+    if(dead) return false;
+
+    // player hit
+    const pdx=player.x-e.x, pdy=(player.y-10)-e.y;
+    if(Math.sqrt(pdx*pdx+pdy*pdy)<36){
+      hp--;updateHUD();
+      burst(player.x,player.y,'#ff5555',12);
+      return false;
+    }
+    drawEnemy(e);
+    return true;
+  });
+
+  // particles
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    p.x+=p.vx; p.y+=p.vy; p.vy+=0.1; p.life--;
+    ctx.globalAlpha=p.life/p.maxLife;
+    ctx.fillStyle=p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha=1;
+  });
+
+  if(hp<=0){endGame();return;}
+  requestAnimationFrame(gameLoop);
+}
+
+function startGame(){
+  document.getElementById('startMsg').style.display='none';
+  running=true; started=true;
+  gameLoop();
+}
+function endGame(){
+  running=false;
+  document.getElementById('finalScore').textContent=score;
+  document.getElementById('overlay').style.display='block';
+}
+function restartGame(){ init(); startGame(); }
+
+document.addEventListener('keydown', e=>{
+  keys[e.key]=true;
+  if(!started&&(e.key===' '||e.key.startsWith('Arrow'))) startGame();
+  if([' ','ArrowLeft','ArrowRight','ArrowUp'].includes(e.key)) e.preventDefault();
+});
+document.addEventListener('keyup', e=>{ keys[e.key]=false; });
+
+canvas.addEventListener('click',()=>{ if(!started) startGame(); });
+canvas.addEventListener('touchstart', e=>{
+  if(!started){startGame();return;}
+  if(player.cooldown<=0) shoot();
+  e.preventDefault();
+},{passive:false});
+
+let touchX=null;
+canvas.addEventListener('touchmove',e=>{
+  if(!started) return;
+  const nx=e.touches[0].clientX;
+  if(touchX!==null){
+    const dx=nx-touchX;
+    if(dx<-6){keys['ArrowLeft']=true;keys['ArrowRight']=false;}
+    else if(dx>6){keys['ArrowRight']=true;keys['ArrowLeft']=false;}
+    else{keys['ArrowLeft']=false;keys['ArrowRight']=false;}
+  }
+  touchX=nx;
+  e.preventDefault();
+},{passive:false});
+canvas.addEventListener('touchend',()=>{keys['ArrowLeft']=false;keys['ArrowRight']=false;touchX=null;});
+
+document.getElementById('btnLeft').addEventListener('touchstart',e=>{keys['ArrowLeft']=true;e.preventDefault();},{passive:false});
+document.getElementById('btnLeft').addEventListener('touchend',()=>keys['ArrowLeft']=false);
+document.getElementById('btnRight').addEventListener('touchstart',e=>{keys['ArrowRight']=true;e.preventDefault();},{passive:false});
+document.getElementById('btnRight').addEventListener('touchend',()=>keys['ArrowRight']=false);
+document.getElementById('btnFire').addEventListener('touchstart',e=>{
+  if(!started) startGame();
+  else if(player.cooldown<=0) shoot();
+  e.preventDefault();
+},{passive:false});
+
+init();
+</script>
+</body>
+</html>
